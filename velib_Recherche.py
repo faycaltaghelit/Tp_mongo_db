@@ -1,117 +1,75 @@
-import webbrowser
 import folium
 import pymongo
-from branca.element import IFrame
+from geopy.geocoders import Nominatim
+import webbrowser
+from geopy.distance import geodesic
 
-# MongoDB connection
-myclient = pymongo.MongoClient("mongodb://localhost:27017/")
-mydb = myclient["test"]
-mycol = mydb["velib"]
-Cursor = mycol.find()
-tablo_stations = list(Cursor)
+# Initialiser le géocodeur
+geolocator = Nominatim(user_agent="mon_application")
 
-# Create the map
-m = folium.Map(location=[48.821270, 2.311693], tiles="OpenStreetMap", zoom_start=15)
+# Demander l'adresse à l'utilisateur
+adresse = input("Entrez une adresse avec la ville ou le code postal: ")
 
-# Add markers for stations
-for station in tablo_stations:
-    msg1 = f"{station['ebike']} vélos électriques"
-    msg2 = f"{station['mechanical']} vélos mécaniques"
-    msg3 = f"{station['numdocksavailable']} docks disponibles"
+# Géocoder l'adresse
+location = geolocator.geocode(adresse)
 
-    html = f"""
-    <html>
-    <head>
-        <style>
-            .station-popup {{
-                font-family: Arial, sans-serif;
-                padding: 10px;
-                max-width: 200px;
-                box-shadow: 8px 8px 12px #aaa;
-            }}
-            .station-name {{
-                font-size: 16px;
-                font-weight: bold;
-                color: #333;
-                margin-bottom: 10px;
-            }}
-            .station-info {{
-                font-size: 14px;
-                color: #666;
-                margin-bottom: 5px;
-            }}
-            .street-view-link {{
-                display: inline-block;
-                margin-top: 10px;
-                padding: 5px 10px;
-                background-color: #4285F4;
-                color: white;
-                text-decoration: none;
-                border-radius: 3px;
-            }}
-        </style>
-    </head>
-    <body>
-        <div class="station-popup">
-            <div class="station-name">{station['name']}</div>
-            <div class="station-info">{msg1}</div>
-            <div class="station-info">{msg2}</div>
-            <div class="station-info">{msg3}</div>
-            <a href="https://www.google.com/maps?layer=c&cbll={station['coordonnees_geo']['lat']},{station['coordonnees_geo']['lon']}" target="_blank" class="street-view-link">View in Street View</a>
-        </div>
-    </body>
-    </html>
-    """
+# Vérifier si une localisation a été trouvée
+if location:
+    print(f"Latitude : {location.latitude}")
+    print(f"Longitude : {location.longitude}")
 
-    iframe = IFrame(html=html, width=220, height=150)
-    popup = folium.Popup(iframe, max_width=300)
+    m = folium.Map(location=[location.latitude, location.longitude], tiles="OpenStreetMap", zoom_start=16)
+    street_view_url1 = f"https://www.google.com/maps/@?api=1&map_action=pano&viewpoint={location.latitude}, {location.longitude}"
 
-    folium.Marker(
-        [station['coordonnees_geo']['lat'], station['coordonnees_geo']['lon']],
-        popup=popup,
-        tooltip=station['name']  # Tooltip for station name
-    ).add_to(m)
+    msg_html1 = f"""
+                <div style="font-family: Arial, sans-serif; width: 250px;">
+                    <h3 style="color: #4a4a4a; margin-bottom: 10px;">{adresse}</h3>
+                    <img src="depart.jpg" style="width: 100%; margin-bottom: 10px;">   
+                 
+                    <a href="{street_view_url1}" target="_blank" style="display: inline-block; background-color: #4285F4; color: white; padding: 8px 12px; text-decoration: none; border-radius: 4px; margin-top: 10px;">Voir dans Street View</a>
+                </div>
+                """
+    folium.Marker([location.latitude, location.longitude], popup=folium.Popup(msg_html1, max_width=300), icon=folium.Icon(color='green', icon='info-sign')).add_to(m)
 
-# Add search functionality
-search_html = """
-<script>
-    function addSearchBar(mapId) {
-        const searchBar = document.createElement('input');
-        searchBar.type = 'text';
-        searchBar.placeholder = 'Rechercher une station...';
-        searchBar.style.width = '300px';
-        searchBar.style.padding = '10px';
-        searchBar.style.position = 'absolute';
-        searchBar.style.top = '10px';
-        searchBar.style.right = '10px';
-        searchBar.style.zIndex = 1000;
-        searchBar.style.border = '1px solid #ccc';
-        searchBar.style.borderRadius = '5px';
-        
-        document.getElementById(mapId).appendChild(searchBar);
+    # connection au serveur mongodb
+    myclient = pymongo.MongoClient("mongodb://localhost:27017/")
+    mydb = myclient["test"]
+    mycol = mydb["velib"]
+    Cursor = mycol.find()
+    tablo_stations = list(Cursor)
 
-        searchBar.addEventListener('input', function() {
-            const query = searchBar.value.toLowerCase();
-            const markers = document.getElementsByClassName('leaflet-marker-icon');
-            for (let marker of markers) {
-                const title = marker.getAttribute('title') || '';
-                if (title.toLowerCase().includes(query)) {
-                    marker.style.display = '';
-                } else {
-                    marker.style.display = 'none';
-                }
-            }
-        });
-    }
-    window.onload = function() {
-        addSearchBar('map');
-    };
-</script>
-"""
+    # liste des stations
+    for station in tablo_stations:
+        station_location = (station['coordonnees_geo']['lat'], station['coordonnees_geo']['lon'])
+        distance = geodesic((location.latitude, location.longitude), station_location).meters
+        if distance < 500:
+            msg1 = f"{station['ebike']} vélos électriques"
+            msg2 = f"{station['mechanical']} vélos mécaniques"
+            msg3 = f"{station['numdocksavailable']} docks disponibles"
+            msg4 = f"Distance: {int(distance)} mètres"
 
-# Add the script to the map
-m.get_root().html.add_child(folium.Element(search_html))
+            street_view_url = f"https://www.google.com/maps/@?api=1&map_action=pano&viewpoint={station['coordonnees_geo']['lat']},{station['coordonnees_geo']['lon']}"
 
-# Save the map and open it
-m.save("velib_map.html")
-webbrowser.open('velib_map.html')
+            msg_html = f"""
+            <div style="font-family: Arial, sans-serif; width: 250px;">
+                <h3 style="color: #4a4a4a; margin-bottom: 10px;">{station['name']}</h3>
+                <img src="velib.jpg" style="width: 100%; margin-bottom: 10px;">   
+                <p style="color: #666; margin: 5px 0;">{msg1}</p>
+                <p style="color: #666; margin: 5px 0;">{msg2}</p>
+                <p style="color: #666; margin: 5px 0;">{msg3}</p>
+                <p style="color: #666; margin: 5px 0; font-weight: bold;">{msg4}</p>
+                <a href="{street_view_url}" target="_blank" style="display: inline-block; background-color: #4285F4; color: white; padding: 8px 12px; text-decoration: none; border-radius: 4px; margin-top: 10px;">Voir dans Street View</a>
+            </div>
+            """
+
+            folium.Marker([station['coordonnees_geo']['lat'], station['coordonnees_geo']['lon']],
+                          popup=folium.Popup(msg_html, max_width=300)).add_to(m)
+
+    # save the map
+    m.save("map.html")
+    print("Map saved as map.html")
+    # open the map
+    webbrowser.open('map.html')
+
+else:
+    print("Adresse non trouvée.")
